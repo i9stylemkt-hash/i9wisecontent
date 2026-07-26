@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import { ThemeProvider } from 'next-themes'
+import { QueryProvider } from '@/components/shared/query-provider'
 import './globals.css'
 import { siteConfig } from '@/config/site'
 
@@ -38,7 +39,7 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
         >
-          {children}
+          <QueryProvider>{children}</QueryProvider>
         </ThemeProvider>
       </body>
     </html>

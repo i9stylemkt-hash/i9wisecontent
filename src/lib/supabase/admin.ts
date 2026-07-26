@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 
 // ⚠️ ATENÇÃO: Este client bypassa RLS!
 // Usar APENAS em server-side para operações administrativas (cron jobs, migrations)
+// NUNCA importar este arquivo em componentes client-side
 export function createAdminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

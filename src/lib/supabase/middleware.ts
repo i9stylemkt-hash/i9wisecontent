@@ -6,7 +6,7 @@ export async function updateSession(request: NextRequest) {
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
       cookies: {
         getAll() {
@@ -23,19 +23,30 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // IMPORTANT: Do not run code between createServerClient and
+  // supabase.auth.getClaims(). A simple mistake could make it very hard to
+  // debug issues with users being randomly logged out.
+  const { data } = await supabase.auth.getClaims()
+  const user = data?.claims
 
   // Redirecionar para login se não autenticado
-  if (!user && !request.nextUrl.pathname.startsWith('/login')) {
+  if (
+    !user &&
+    !request.nextUrl.pathname.startsWith('/login') &&
+    !request.nextUrl.pathname.startsWith('/register') &&
+    !request.nextUrl.pathname.startsWith('/auth')
+  ) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
   }
 
-  // Redirecionar para dashboard se já autenticado e tentando acessar login
-  if (user && request.nextUrl.pathname.startsWith('/login')) {
+  // Redirecionar para dashboard se já autenticado e tentando acessar login/register
+  if (
+    user &&
+    (request.nextUrl.pathname.startsWith('/login') ||
+      request.nextUrl.pathname.startsWith('/register'))
+  ) {
     const url = request.nextUrl.clone()
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)
