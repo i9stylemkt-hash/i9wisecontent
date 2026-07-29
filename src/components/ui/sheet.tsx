@@ -6,9 +6,30 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
+import { useOverlay } from "@/hooks/use-overlay"
 
-function Sheet({ ...props }: SheetPrimitive.Root.Props) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+function Sheet({ onOpenChange, ...props }: SheetPrimitive.Root.Props) {
+  const { openOverlay, closeOverlay } = useOverlay()
+
+  const handleOpenChange = React.useCallback(
+    (open: boolean, eventDetails: SheetPrimitive.Root.ChangeEventDetails) => {
+      if (open) {
+        openOverlay()
+      } else {
+        closeOverlay()
+      }
+      onOpenChange?.(open, eventDetails)
+    },
+    [onOpenChange, openOverlay, closeOverlay]
+  )
+
+  return (
+    <SheetPrimitive.Root
+      data-slot="sheet"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function SheetTrigger({ ...props }: SheetPrimitive.Trigger.Props) {

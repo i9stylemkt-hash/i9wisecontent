@@ -6,9 +6,30 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
+import { useOverlay } from "@/hooks/use-overlay"
 
-function Dialog({ ...props }: DialogPrimitive.Root.Props) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+function Dialog({ onOpenChange, ...props }: DialogPrimitive.Root.Props) {
+  const { openOverlay, closeOverlay } = useOverlay()
+
+  const handleOpenChange = React.useCallback(
+    (open: boolean, eventDetails: DialogPrimitive.Root.ChangeEventDetails) => {
+      if (open) {
+        openOverlay()
+      } else {
+        closeOverlay()
+      }
+      onOpenChange?.(open, eventDetails)
+    },
+    [onOpenChange, openOverlay, closeOverlay]
+  )
+
+  return (
+    <DialogPrimitive.Root
+      data-slot="dialog"
+      onOpenChange={handleOpenChange}
+      {...props}
+    />
+  )
 }
 
 function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
