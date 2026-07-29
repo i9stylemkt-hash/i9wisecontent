@@ -7,7 +7,9 @@ async function fetchArticles(blogId?: string) {
   const params = blogId ? `?blog_id=${blogId}` : ''
   const res = await fetch(`/api/articles${params}`)
   if (!res.ok) throw new Error('Erro ao buscar artigos')
-  return res.json()
+  const json = await res.json()
+  // API returns paginated result { data: [], meta: {} } — extract the array
+  return Array.isArray(json) ? json : (json.data ?? [])
 }
 
 async function fetchArticle(id: string) {

@@ -28,7 +28,9 @@ export default function IdeasPage() {
     queryFn: async () => {
       const res = await fetch('/api/ideas')
       if (!res.ok) throw new Error('Erro')
-      return res.json()
+      const json = await res.json()
+      // API returns paginated result { data: [], meta: {} } — extract the array
+      return Array.isArray(json) ? json : (json.data ?? [])
     },
   })
 
