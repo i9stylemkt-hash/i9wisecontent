@@ -15,25 +15,23 @@ function getRateLimitCategory(pathname: string): keyof typeof RATE_LIMITS | null
 
 /**
  * Extrai identificador para rate limiting.
- * Para rotas autenticadas: usa cookie de sessão como proxy do userId.
+ * Para rotas autenticadas: usa cookie de sessão como identificador.
  * Para rotas auth: usa IP.
  */
 function extractIdentifier(request: NextRequest, category: string): string {
   if (category === 'auth') {
-    // Usar IP para rotas de auth (sem sessão ainda)
     return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
       ?? request.headers.get('x-real-ip')
       ?? 'unknown-ip'
   }
-  // Para rotas autenticadas, usar cookie de sessão como proxy
   const sessionCookie = request.cookies.get('sb-access-token')?.value
     ?? request.cookies.get('sb-refresh-token')?.value
     ?? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     ?? 'unknown'
-  return sessionCookie.slice(0, 32) // Usar só um prefixo como key
+  return sessionCookie.slice(0, 32)
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Rate limiting para rotas de API
