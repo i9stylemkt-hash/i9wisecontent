@@ -1,14 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Desabilitar Turbopack no build (instável em produção)
-  // Suprimir avisos de middleware depreciado no Next.js 16
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
+  // Next.js 16 ignora TypeScript/ESLint errors no build por padrão
+  // Middleware depreciado: migrar para proxy no futuro
 };
 
 export default nextConfig;
