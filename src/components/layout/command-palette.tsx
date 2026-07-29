@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Command } from 'cmdk'
 import {
@@ -14,9 +14,10 @@ import {
   Search,
 } from 'lucide-react'
 import { useOverlay } from '@/hooks/use-overlay'
+import { useCommandPalette } from '@/hooks/use-command-palette'
 
 export function CommandPalette() {
-  const [open, setOpen] = useState(false)
+  const { isOpen: open, open: openPalette, close: closePalette, toggle } = useCommandPalette()
   const router = useRouter()
   const { openOverlay, closeOverlay } = useOverlay()
 
@@ -35,20 +36,20 @@ export function CommandPalette() {
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
-        setOpen((prev) => !prev)
+        toggle()
       }
       if (e.key === 'Escape' && open) {
-        setOpen(false)
+        closePalette()
       }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open])
+  }, [open, toggle, closePalette])
 
   const navigate = useCallback((path: string) => {
     router.push(path)
-    setOpen(false)
-  }, [router])
+    closePalette()
+  }, [router, closePalette])
 
   if (!open) return null
 
@@ -61,7 +62,7 @@ export function CommandPalette() {
     >
       <div
         className="fixed inset-0 bg-black/50"
-        onClick={() => setOpen(false)}
+        onClick={() => closePalette()}
         aria-hidden="true"
       />
       <div className="fixed left-1/2 top-[20%] w-full max-w-lg -translate-x-1/2">

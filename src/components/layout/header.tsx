@@ -1,13 +1,18 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { Search, Bell, Menu } from 'lucide-react'
+import { Search, Menu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useSidebar } from '@/hooks/use-sidebar'
+import { useCommandPalette } from '@/hooks/use-command-palette'
+import { useUser } from '@/hooks/use-user'
+import { NotificationCenter } from '@/components/layout/NotificationCenter'
 
 export function Header() {
   const pathname = usePathname()
   useSidebar() // hook required for reactivity
+  const openCommandPalette = useCommandPalette((s) => s.open)
+  const { userId } = useUser()
 
   const breadcrumbs = generateBreadcrumbs(pathname)
 
@@ -46,6 +51,7 @@ export function Header() {
         <Button
           variant="outline"
           className="h-8 w-64 justify-start gap-2 text-xs text-muted-foreground"
+          onClick={openCommandPalette}
         >
           <Search className="h-3.5 w-3.5" />
           <span>⌘K Buscar...</span>
@@ -54,9 +60,7 @@ export function Header() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" className="relative h-8 w-8">
-          <Bell className="h-4 w-4" />
-        </Button>
+        <NotificationCenter userId={userId} />
       </div>
     </header>
   )
