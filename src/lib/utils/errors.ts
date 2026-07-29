@@ -38,12 +38,56 @@ export class NotFoundError extends AppError {
   }
 }
 
-export class RateLimitError extends AppError {
+export class RateLimitExceededError extends AppError {
+  constructor(
+    message = 'Limite de requisições excedido',
+    public retryAfterMs?: number
+  ) {
+    super(message, 'RATE_LIMIT_EXCEEDED', 429)
+    this.name = 'RateLimitExceededError'
+  }
+}
+
+/**
+ * @deprecated Use RateLimitExceededError instead
+ */
+export class RateLimitError extends RateLimitExceededError {
   constructor(message = 'Limite de requisições excedido') {
-    super(message, 'RATE_LIMIT_ERROR', 429)
+    super(message)
     this.name = 'RateLimitError'
   }
 }
+
+export class PipelineTimeoutError extends AppError {
+  constructor(
+    public durationMs: number,
+    public stage?: string
+  ) {
+    super(
+      `Pipeline excedeu o tempo limite (${Math.round(durationMs / 1000)}s)${stage ? ` na etapa ${stage}` : ''}`,
+      'PIPELINE_TIMEOUT',
+      504
+    )
+    this.name = 'PipelineTimeoutError'
+  }
+}
+
+export class ConcurrencyLimitError extends AppError {
+  constructor(
+    public currentRunning: number,
+    public maxConcurrent: number
+  ) {
+    super(
+      `Limite de concorrência atingido (${currentRunning}/${maxConcurrent} pipelines em execução)`,
+      'CONCURRENCY_LIMIT',
+      429
+    )
+    this.name = 'ConcurrencyLimitError'
+  }
+}
+
+// Re-export PipelineTransitionError from state-machine to keep the error hierarchy accessible
+export { PipelineTransitionError } from '@/lib/pipeline/state-machine'
 
 export class AIProviderError extends AppError {
   constructor(provider: string, message: string, details?: unknown) {

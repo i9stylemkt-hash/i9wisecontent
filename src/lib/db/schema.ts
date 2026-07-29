@@ -24,6 +24,7 @@ export const pipelineStatusEnum = pgEnum('pipeline_status', [
   'completed',
   'failed',
   'cancelled',
+  'rejected',
 ])
 
 export const pipelineStageEnum = pgEnum('pipeline_stage', [
@@ -284,6 +285,19 @@ export const cronJobs = pgTable('cron_jobs', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/** Notifications — Notificações do sistema para o usuário */
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  type: text('type').notNull(),
+  title: text('title').notNull(),
+  message: text('message').notNull(),
+  actionUrl: text('action_url'),
+  relatedId: uuid('related_id'),
+  isRead: boolean('is_read').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // ============================================
 // RELATIONS
 // ============================================
@@ -345,6 +359,8 @@ export const cronJobsRelations = relations(cronJobs, ({ one }) => ({
   blog: one(blogs, { fields: [cronJobs.blogId], references: [blogs.id] }),
 }))
 
+export const notificationsRelations = relations(notifications, ({}) => ({}))
+
 // ============================================
 // TYPE EXPORTS
 // ============================================
@@ -373,3 +389,5 @@ export type ArticleNote = typeof articleNotes.$inferSelect
 export type NewArticleNote = typeof articleNotes.$inferInsert
 export type CronJob = typeof cronJobs.$inferSelect
 export type NewCronJob = typeof cronJobs.$inferInsert
+export type Notification = typeof notifications.$inferSelect
+export type NewNotification = typeof notifications.$inferInsert

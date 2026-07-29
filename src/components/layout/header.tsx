@@ -7,12 +7,12 @@ import { useSidebar } from '@/hooks/use-sidebar'
 
 export function Header() {
   const pathname = usePathname()
-  const { isExpanded } = useSidebar()
+  useSidebar() // hook required for reactivity
 
   const breadcrumbs = generateBreadcrumbs(pathname)
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-background/95 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-border bg-background/95 px-6 backdrop-blur supports-backdrop-filter:bg-background/60">
       {/* Left: Breadcrumb */}
       <div className="flex items-center gap-2">
         <Button

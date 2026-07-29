@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Key, Trash2, CheckCircle, XCircle } from 'lucide-react'
+import { Plus, Key } from 'lucide-react'
 
 const PROVIDERS = [
   { id: 'google', label: 'Google (Gemini)', icon: '🟡' },
@@ -143,7 +143,7 @@ export default function AIModelsPage() {
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2">
             {[
-              { name: 'Planejador', model: 'gemini-2.0-flash', provider: 'Google' },
+              { name: 'Planejador', model: 'llama-3.3-70b-versatile', provider: 'Groq' },
               { name: 'Pesquisador', model: 'gemini-2.0-flash', provider: 'Google' },
               { name: 'Escritor', model: 'claude-sonnet-4', provider: 'Anthropic' },
               { name: 'Revisor', model: 'gemini-2.0-flash', provider: 'Google' },

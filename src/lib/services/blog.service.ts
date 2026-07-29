@@ -1,6 +1,9 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { slugify } from '@/lib/utils'
+import { Logger } from '@/lib/utils/logger'
 import type { CreateBlogInput, UpdateBlogInput } from '@/lib/validations/blog'
+
+const logger = new Logger('BlogService')
 
 export class BlogService {
   static async getAll(userId: string) {
@@ -33,6 +36,7 @@ export class BlogService {
 
     const slug = await this.generateUniqueSlug(input.name, userId)
 
+    // Tentar inserir com o schema completo (Drizzle)
     const insertData = {
       user_id: userId,
       name: input.name,
@@ -57,6 +61,41 @@ export class BlogService {
       .insert(insertData)
       .select()
       .single()
+
+    // Se falhar por colunas inexistentes, tentar com schema mínimo + settings JSONB
+    if (error && (error.message?.includes('column') || error.code === '42703')) {
+      logger.warn('Full schema insert failed, falling back to minimal schema', { errorMessage: error.message })
+      const fallbackData = {
+        user_id: userId,
+        name: input.name,
+        niche: input.niche,
+        description: input.description ?? null,
+        target_audience: input.targetAudience ?? null,
+        tone: input.toneOfVoice ?? 'professional',
+        language: input.contentLanguage ?? 'pt-BR',
+        status: 'active',
+        settings: {
+          slug,
+          authorPersona: input.authorPersona ?? null,
+          keywords: input.keywords ?? [],
+          publicationFrequency: input.publicationFrequency,
+          automationLevel: input.automationLevel,
+          contentTypes: input.contentTypes ?? null,
+          qualityThreshold: input.qualityThreshold,
+          humanReviewRequired: input.humanReviewRequired,
+          seoConfig: input.seoConfig ?? null,
+        },
+      }
+
+      const { data: fallbackResult, error: fallbackError } = await supabase
+        .from('blogs')
+        .insert(fallbackData)
+        .select()
+        .single()
+
+      if (fallbackError) throw fallbackError
+      return fallbackResult
+    }
 
     if (error) throw error
     return data
@@ -114,6 +153,44 @@ export class BlogService {
       .update({ is_active: !isActive })
       .eq('id', id)
       .eq('user_id', userId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data
+  }
+
+  static async clone(sourceBlogId: string, userId: string, newName: string) {
+    const supabase = await createServerSupabaseClient()
+
+    // Fetch source blog
+    const source = await this.getById(sourceBlogId, userId)
+
+    // Generate unique slug for the new blog
+    const slug = await this.generateUniqueSlug(newName, userId)
+
+    // Copy configuration fields
+    const insertData = {
+      user_id: userId,
+      name: newName,
+      slug,
+      niche: (source as Record<string, unknown>).niche as string,
+      tone_of_voice: (source as Record<string, unknown>).tone_of_voice as string | null,
+      author_persona: (source as Record<string, unknown>).author_persona as string | null,
+      target_audience: (source as Record<string, unknown>).target_audience as string | null,
+      keywords: (source as Record<string, unknown>).keywords as string[] | null,
+      content_language: (source as Record<string, unknown>).content_language as string,
+      publication_frequency: (source as Record<string, unknown>).publication_frequency as string,
+      automation_level: (source as Record<string, unknown>).automation_level as string,
+      content_types: (source as Record<string, unknown>).content_types as unknown,
+      quality_threshold: (source as Record<string, unknown>).quality_threshold as number,
+      human_review_required: (source as Record<string, unknown>).human_review_required as boolean,
+      seo_config: (source as Record<string, unknown>).seo_config as unknown,
+    }
+
+    const { data, error } = await supabase
+      .from('blogs')
+      .insert(insertData)
       .select()
       .single()
 

@@ -30,6 +30,7 @@ export const groqModels = {
   llama70b: groq('llama-3.3-70b-versatile'),
   llama8b: groq('llama-3.1-8b-instant'),
   mixtral: groq('mixtral-8x7b-32768'),
+  gptOss20b: groq('openai/gpt-oss-20b'),
 } as const
 
 export const openRouterModels = {

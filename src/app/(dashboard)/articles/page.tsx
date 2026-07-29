@@ -1,12 +1,11 @@
 'use client'
 
 import { PageHeader } from '@/components/shared/page-header'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { useArticles } from '@/hooks/use-articles'
-import { FileText, Search, Star, Calendar } from 'lucide-react'
+import { FileText, Search, Star } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 

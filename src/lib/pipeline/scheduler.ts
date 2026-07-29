@@ -1,5 +1,8 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { PipelineController } from './controller'
+import { Logger } from '@/lib/utils/logger'
+
+const logger = new Logger('Scheduler')
 
 interface SchedulerResult {
   triggered: number
@@ -15,10 +18,17 @@ const FREQUENCY_DAYS: Record<string, number> = {
 }
 
 /**
- * Scheduler — evaluates which blogs need content and triggers pipelines
+ * Scheduler — evaluates which blogs need content and triggers pipelines.
+ * Uses admin client (service role key) to bypass RLS, since cron jobs
+ * don't have a user session with cookies.
  */
 export async function runScheduler(userId: string): Promise<SchedulerResult> {
-  const supabase = await createServerSupabaseClient()
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+    logger.error('SUPABASE_SERVICE_ROLE_KEY is missing or empty — aborting scheduler run')
+    return { triggered: 0, results: [] }
+  }
+
+  const supabase = createAdminClient()
 
   // Get all active blogs for the user
   const { data: blogs, error } = await supabase
@@ -27,12 +37,16 @@ export async function runScheduler(userId: string): Promise<SchedulerResult> {
     .eq('user_id', userId)
     .eq('is_active', true)
 
-  if (error || !blogs) return { triggered: 0, results: [] }
+  if (error || !blogs) {
+    logger.error('Failed to fetch blogs for scheduling', error ?? undefined, { userId })
+    return { triggered: 0, results: [] }
+  }
 
   const results: SchedulerResult['results'] = []
 
   for (const blog of blogs) {
     const b = blog as Record<string, unknown>
+    const blogId = b.id as string
     const frequency = (b.publication_frequency as string) || 'weekly'
     const intervalDays = FREQUENCY_DAYS[frequency] || 7
 
@@ -40,7 +54,7 @@ export async function runScheduler(userId: string): Promise<SchedulerResult> {
     const { data: lastArticle } = await supabase
       .from('articles')
       .select('created_at')
-      .eq('blog_id', b.id as string)
+      .eq('blog_id', blogId)
       .order('created_at', { ascending: false })
       .limit(1)
       .single()
@@ -52,20 +66,28 @@ export async function runScheduler(userId: string): Promise<SchedulerResult> {
 
     if (daysSince >= intervalDays) {
       try {
-        await PipelineController.execute({
-          blogId: b.id as string,
+        await PipelineController.enqueue({
+          blogId,
           userId,
         })
-        results.push({ blogId: b.id as string, status: 'triggered' })
+        results.push({ blogId, status: 'enqueued' })
+        logger.info('Pipeline enqueued by scheduler', { blogId, daysSince, frequency })
       } catch (err) {
-        results.push({
-          blogId: b.id as string,
-          status: 'error',
-          error: err instanceof Error ? err.message : 'Unknown error',
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+        results.push({ blogId, status: 'error', error: errorMessage })
+        logger.error('Scheduler pipeline enqueue failed', err instanceof Error ? err : undefined, {
+          blogId,
+          frequency,
         })
       }
     }
   }
 
-  return { triggered: results.filter((r) => r.status === 'triggered').length, results }
+  logger.info('Scheduler run completed', {
+    userId,
+    totalBlogs: blogs.length,
+    triggered: results.filter((r) => r.status === 'enqueued').length,
+  })
+
+  return { triggered: results.filter((r) => r.status === 'enqueued').length, results }
 }

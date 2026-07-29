@@ -1,15 +1,25 @@
 import { AIRouter } from '@/lib/ai/router'
+import { PromptSanitizer, FIELD_LIMITS } from '@/lib/ai/sanitizer'
 import type { WriterInput, WriterOutput } from './types'
 
 export class WriterAgent {
   static async execute(input: WriterInput): Promise<WriterOutput> {
-    const system = `Você é um escritor de conteúdo especializado em ${input.blogConfig.niche}.
+    // Sanitize user-provided fields before prompt interpolation
+    const safeName = PromptSanitizer.sanitize(input.blogConfig.name, { maxLength: FIELD_LIMITS.title })
+    const safeNiche = PromptSanitizer.sanitize(input.blogConfig.niche, { maxLength: FIELD_LIMITS.description })
+    const safeTone = PromptSanitizer.sanitize(input.blogConfig.toneOfVoice ?? '', { maxLength: FIELD_LIMITS.persona })
+    const safePersona = PromptSanitizer.sanitize(input.blogConfig.authorPersona ?? '', { maxLength: FIELD_LIMITS.persona })
+    const safeAudience = PromptSanitizer.sanitize(input.blogConfig.targetAudience ?? '', { maxLength: FIELD_LIMITS.persona })
+    const safeTopic = PromptSanitizer.sanitize(input.topic, { maxLength: FIELD_LIMITS.title })
+    const safeBriefing = PromptSanitizer.sanitize(input.briefing, { maxLength: FIELD_LIMITS.default })
+
+    const system = `Você é um escritor de conteúdo especializado em ${safeNiche}.
 Seu papel é criar artigos completos, de alta qualidade, prontos para publicação.
 
-Blog: ${input.blogConfig.name}
-Tom de voz: ${input.blogConfig.toneOfVoice || 'profissional e acessível'}
-Persona: ${input.blogConfig.authorPersona || 'especialista no tema'}
-Público: ${input.blogConfig.targetAudience || 'público geral'}
+Blog: ${safeName}
+Tom de voz: ${safeTone || 'profissional e acessível'}
+Persona: ${safePersona || 'especialista no tema'}
+Público: ${safeAudience || 'público geral'}
 Idioma: ${input.blogConfig.contentLanguage}
 
 Regras:
@@ -20,10 +30,10 @@ Regras:
 - Otimize para SEO naturalmente
 - Extensão alvo: ${input.targetWordCount || 1500} palavras`
 
-    const prompt = `Escreva um artigo completo sobre: "${input.topic}"
+    const prompt = `Escreva um artigo completo sobre: "${safeTopic}"
 
 Briefing de pesquisa:
-${input.briefing}
+${safeBriefing}
 
 ${input.template ? `Siga esta estrutura:\n${input.template}` : ''}
 

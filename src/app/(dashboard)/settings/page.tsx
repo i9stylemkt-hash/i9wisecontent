@@ -1,6 +1,6 @@
 import { PageHeader } from '@/components/shared/page-header'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Brain, DollarSign, Settings } from 'lucide-react'
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Brain, DollarSign } from 'lucide-react'
 import Link from 'next/link'
 
 export default function SettingsPage() {

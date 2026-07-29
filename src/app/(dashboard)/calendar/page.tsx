@@ -4,8 +4,7 @@ import { useState, useMemo } from 'react'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { ChevronLeft, ChevronRight, Calendar as CalIcon } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useArticles } from '@/hooks/use-articles'
 import Link from 'next/link'
 import {
@@ -18,7 +17,6 @@ import {
   addMonths,
   subMonths,
   isSameMonth,
-  isSameDay,
   isToday,
 } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
@@ -87,7 +85,7 @@ export default function CalendarPage() {
               return (
                 <div
                   key={dateKey}
-                  className={`min-h-[80px] rounded-md border border-transparent p-1.5 ${
+                  className={`min-h-20 rounded-md border border-transparent p-1.5 ${
                     isToday(day) ? 'border-primary/50 bg-primary/5' : ''
                   } ${!isCurrentMonth ? 'opacity-40' : ''}`}
                 >

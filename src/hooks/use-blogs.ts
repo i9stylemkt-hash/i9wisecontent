@@ -23,6 +23,15 @@ async function createBlog(data: CreateBlogInput) {
   })
   if (!res.ok) {
     const error = await res.json()
+    const details = error.details?.fieldErrors
+    if (details) {
+      // Build a readable message from field errors
+      const fieldMessages = Object.entries(details)
+        .filter(([, msgs]) => Array.isArray(msgs) && (msgs as string[]).length > 0)
+        .map(([field, msgs]) => `${field}: ${(msgs as string[]).join(', ')}`)
+        .join('; ')
+      throw new Error(fieldMessages || error.error || 'Erro ao criar blog')
+    }
     throw new Error(error.error || 'Erro ao criar blog')
   }
   return res.json()

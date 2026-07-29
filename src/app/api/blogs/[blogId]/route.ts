@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { BlogService } from '@/lib/services/blog.service'
 import { updateBlogSchema } from '@/lib/validations/blog'
+import { Logger } from '@/lib/utils/logger'
+
+const logger = new Logger('API:Blog')
 
 export async function GET(
   _request: Request,
@@ -19,7 +22,7 @@ export async function GET(
     const blog = await BlogService.getById(blogId, user.id)
     return NextResponse.json(blog)
   } catch (error) {
-    console.error('Error fetching blog:', error)
+    logger.error('Error fetching blog', error instanceof Error ? error : undefined)
     return NextResponse.json({ error: 'Blog não encontrado' }, { status: 404 })
   }
 }
@@ -50,7 +53,7 @@ export async function PUT(
     const blog = await BlogService.update(blogId, parsed.data, user.id)
     return NextResponse.json(blog)
   } catch (error) {
-    console.error('Error updating blog:', error)
+    logger.error('Error updating blog', error instanceof Error ? error : undefined)
     return NextResponse.json({ error: 'Erro ao atualizar blog' }, { status: 500 })
   }
 }
@@ -71,7 +74,7 @@ export async function DELETE(
     await BlogService.delete(blogId, user.id)
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Error deleting blog:', error)
+    logger.error('Error deleting blog', error instanceof Error ? error : undefined)
     return NextResponse.json({ error: 'Erro ao excluir blog' }, { status: 500 })
   }
 }

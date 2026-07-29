@@ -2,14 +2,18 @@
 
 import { useParams, useRouter } from 'next/navigation'
 import { useState, useEffect, useCallback } from 'react'
-import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { useArticle, useUpdateArticle, useDeleteArticle } from '@/hooks/use-articles'
+import { usePipelineAdvance } from '@/hooks/use-pipeline-advance'
+import { PipelineProgressBar } from '@/components/pipeline/pipeline-progress-bar'
+import { SaveAndAdvanceButton } from '@/components/pipeline/save-and-advance-button'
 import { ArrowLeft, Save, Trash2, Download, Eye, Edit3 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import Link from 'next/link'
 import { ARTICLE_STATUSES } from '@/lib/utils/constants'
 
@@ -17,7 +21,7 @@ export default function ArticleDetailPage() {
   const params = useParams()
   const router = useRouter()
   const articleId = params.articleId as string
-  const { data: article, isLoading } = useArticle(articleId)
+  const { data: article, isLoading, refetch } = useArticle(articleId)
   const updateArticle = useUpdateArticle()
   const deleteArticle = useDeleteArticle()
 
@@ -27,16 +31,36 @@ export default function ArticleDetailPage() {
   const [status, setStatus] = useState('')
   const [showPreview, setShowPreview] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
+  // Pipeline advance hook
+  const pipeline = usePipelineAdvance({
+    articleId,
+    onSuccess: () => {
+      setNotification({ type: 'success', message: 'Estágio concluído com sucesso!' })
+      refetch() // Refresh article data to get new content/status
+      setTimeout(() => setNotification(null), 5000)
+    },
+    onError: (error) => {
+      setNotification({ type: 'error', message: error.message })
+      setTimeout(() => setNotification(null), 8000)
+    },
+  })
+
+  // Sync local state from server data on initial load or when article changes from pipeline
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (article) {
       const a = article as Record<string, unknown>
       setTitle((a.title as string) || '')
-      setContent((a.content_markdown as string) || '')
+      setContent((a.content_markdown as string) || (a.content as string) || '')
       setMetaDescription((a.meta_description as string) || '')
       setStatus((a.status as string) || '')
+      setIsDirty(false)
     }
-  }, [article])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(article as Record<string, unknown> | undefined)?.id, (article as Record<string, unknown> | undefined)?.status, (article as Record<string, unknown> | undefined)?.content_markdown])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSave = useCallback(async () => {
     await updateArticle.mutateAsync({
@@ -44,7 +68,13 @@ export default function ArticleDetailPage() {
       data: { title, contentMarkdown: content, metaDescription, status: status as 'idea' | 'planning' | 'researching' | 'writing' | 'reviewing' | 'revision' | 'ready' | 'published' | 'archived' },
     })
     setIsDirty(false)
+    setNotification({ type: 'success', message: 'Salvo com sucesso!' })
+    setTimeout(() => setNotification(null), 3000)
   }, [articleId, title, content, metaDescription, status, updateArticle])
+
+  const handleAdvance = useCallback(() => {
+    pipeline.advance({ title, contentMarkdown: content, metaDescription })
+  }, [pipeline, title, content, metaDescription])
 
   async function handleDelete() {
     if (!confirm('Tem certeza que deseja excluir este artigo?')) return
@@ -69,9 +99,31 @@ export default function ArticleDetailPage() {
   }
 
   const qualityScore = (article as Record<string, unknown>)?.quality_score as number | null
+  const isProcessingPipeline = pipeline.isAdvancing || pipeline.isProcessing
 
   return (
     <div className="space-y-4">
+      {/* Pipeline Progress Bar */}
+      <PipelineProgressBar currentStatus={status} isProcessing={pipeline.isProcessing} />
+
+      {/* Notification Banner */}
+      {notification && (
+        <div className={`rounded-md px-4 py-2 text-sm ${
+          notification.type === 'success'
+            ? 'bg-green-900/30 text-green-400 border border-green-800'
+            : 'bg-red-900/30 text-red-400 border border-red-800'
+        }`}>
+          {notification.message}
+        </div>
+      )}
+
+      {/* Pipeline Error */}
+      {pipeline.error && !notification && (
+        <div className="rounded-md bg-red-900/30 text-red-400 border border-red-800 px-4 py-2 text-sm">
+          {pipeline.error.message}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link href="/articles">
@@ -85,6 +137,7 @@ export default function ArticleDetailPage() {
             onChange={(e) => { setTitle(e.target.value); setIsDirty(true) }}
             className="border-none bg-transparent text-lg font-semibold p-0 h-auto focus-visible:ring-0"
             placeholder="Título do artigo"
+            disabled={isProcessingPipeline}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -95,6 +148,7 @@ export default function ArticleDetailPage() {
             value={status}
             onChange={(e) => { setStatus(e.target.value); setIsDirty(true) }}
             className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            disabled={isProcessingPipeline}
           >
             {ARTICLE_STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
@@ -103,27 +157,50 @@ export default function ArticleDetailPage() {
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowPreview(!showPreview)}>
             {showPreview ? <Edit3 className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={!isDirty || updateArticle.isPending}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleSave}
+            disabled={!isDirty || updateArticle.isPending || isProcessingPipeline}
+          >
             <Save className="mr-1.5 h-3.5 w-3.5" />
             Salvar
           </Button>
+          <SaveAndAdvanceButton
+            currentStatus={status}
+            isAdvancing={pipeline.isAdvancing}
+            isProcessing={pipeline.isProcessing}
+            onAdvance={handleAdvance}
+            disabled={updateArticle.isPending}
+          />
         </div>
       </div>
 
+      {/* Processing Indicator */}
+      {pipeline.isProcessing && pipeline.currentStage && (
+        <div className="flex items-center gap-2 rounded-md bg-blue-900/20 border border-blue-800 px-4 py-2 text-sm text-blue-400">
+          <div className="h-3 w-3 rounded-full bg-blue-500 animate-pulse" />
+          Agente de IA processando estágio: <strong>{pipeline.currentStage}</strong>...
+        </div>
+      )}
+
       {/* Editor / Preview */}
       <div className="grid gap-4 lg:grid-cols-[1fr_300px]">
-        <Card className="min-h-[500px]">
+        <Card className="min-h-125">
           <CardContent className="p-0">
             {showPreview ? (
-              <div className="prose prose-invert max-w-none p-6 text-sm">
-                <div dangerouslySetInnerHTML={{ __html: simpleMarkdownToHtml(content) }} />
+              <div className="prose dark:prose-invert max-w-none p-6 text-sm">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {content}
+                </ReactMarkdown>
               </div>
             ) : (
               <Textarea
                 value={content}
                 onChange={(e) => { setContent(e.target.value); setIsDirty(true) }}
                 placeholder="Escreva o conteúdo do artigo em Markdown..."
-                className="min-h-[500px] resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0"
+                className="min-h-125 resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0"
+                disabled={isProcessingPipeline}
               />
             )}
           </CardContent>
@@ -143,6 +220,7 @@ export default function ArticleDetailPage() {
                 maxLength={160}
                 className="text-xs"
                 rows={3}
+                disabled={isProcessingPipeline}
               />
               <p className="mt-1 text-[10px] text-muted-foreground">{metaDescription.length}/160</p>
             </CardContent>
@@ -173,15 +251,4 @@ export default function ArticleDetailPage() {
   )
 }
 
-/** Simple MD→HTML for preview (basic, without heavy deps on client) */
-function simpleMarkdownToHtml(md: string): string {
-  return md
-    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-    .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/gim, '<em>$1</em>')
-    .replace(/```([\s\S]*?)```/gim, '<pre><code>$1</code></pre>')
-    .replace(/`(.*?)`/gim, '<code>$1</code>')
-    .replace(/\n/gim, '<br>')
-}
+

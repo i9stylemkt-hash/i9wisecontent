@@ -64,7 +64,7 @@ export default function CostsPage() {
           {!costs?.byDay?.length ? (
             <p className="text-sm text-muted-foreground text-center py-4">Sem dados para o período.</p>
           ) : (
-            <div className="space-y-1 max-h-[300px] overflow-y-auto">
+            <div className="space-y-1 max-h-75 overflow-y-auto">
               {(costs.byDay as Array<{ date: string; cost: number }>).map((item) => (
                 <div key={item.date} className="flex items-center justify-between py-1 text-xs">
                   <span className="text-muted-foreground">{item.date}</span>

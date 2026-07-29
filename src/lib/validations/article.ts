@@ -26,6 +26,15 @@ export const updateArticleSchema = z.object({
 export type CreateArticleInput = z.infer<typeof createArticleSchema>
 export type UpdateArticleInput = z.infer<typeof updateArticleSchema>
 
+/** Schema for the advance request body */
+export const advanceRequestSchema = z.object({
+  title: z.string().min(1, 'Título é obrigatório').max(300),
+  contentMarkdown: z.string().default(''),
+  metaDescription: z.string().max(300).optional(),
+})
+
+export type AdvanceRequestInput = z.infer<typeof advanceRequestSchema>
+
 /** Transições de status válidas */
 export const validStatusTransitions: Record<string, string[]> = {
   idea: ['planning', 'archived'],

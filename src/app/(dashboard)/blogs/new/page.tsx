@@ -41,7 +41,7 @@ export default function NewBlogPage() {
       await createBlog.mutateAsync(formData as CreateBlogInput)
       router.push('/blogs')
     } catch {
-      // Error handled by mutation
+      // Error handled by mutation — displayed below
     }
   }
 
@@ -245,7 +245,7 @@ export default function NewBlogPage() {
 
           {createBlog.isError && (
             <p className="text-sm text-destructive">
-              {createBlog.error?.message || 'Erro ao criar blog'}
+              {createBlog.error?.message || 'Erro ao criar blog. Verifique os campos e tente novamente.'}
             </p>
           )}
         </CardContent>

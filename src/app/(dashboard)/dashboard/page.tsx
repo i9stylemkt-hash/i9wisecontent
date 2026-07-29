@@ -3,7 +3,7 @@
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { FileText, DollarSign, Star, BookOpen, ArrowUpRight, Workflow } from 'lucide-react'
+import { FileText, DollarSign, Star, BookOpen, ArrowUpRight } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useBlogs } from '@/hooks/use-blogs'
 import { useArticles } from '@/hooks/use-articles'

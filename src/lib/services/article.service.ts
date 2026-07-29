@@ -1,7 +1,10 @@
 import { createServerSupabaseClient } from '@/lib/supabase/server'
 import { slugify } from '@/lib/utils'
 import { isValidTransition } from '@/lib/validations/article'
+import { Logger } from '@/lib/utils/logger'
 import type { CreateArticleInput, UpdateArticleInput } from '@/lib/validations/article'
+
+const logger = new Logger('ArticleService')
 
 interface ArticleFilters {
   blogId?: string
@@ -94,21 +97,52 @@ export class ArticleService {
 
     const slug = slugify(input.title)
 
+    // Try with full schema first (after migration)
+    const insertData = {
+      blog_id: input.blogId,
+      user_id: userId,
+      title: input.title,
+      slug,
+      meta_description: input.metaDescription ?? null,
+      content_markdown: input.contentMarkdown ?? null,
+      content: input.contentMarkdown ?? null,
+      summary: input.summary ?? null,
+      tags: input.tags ?? [],
+      keywords: input.tags ?? [],
+      status: input.status ?? 'idea',
+      scheduled_date: input.scheduledDate ?? null,
+    }
+
     const { data, error } = await supabase
       .from('articles')
-      .insert({
-        blog_id: input.blogId,
-        title: input.title,
-        slug,
-        meta_description: input.metaDescription ?? null,
-        content_markdown: input.contentMarkdown ?? null,
-        summary: input.summary ?? null,
-        tags: input.tags ?? [],
-        status: input.status,
-        scheduled_date: input.scheduledDate ?? null,
-      })
+      .insert(insertData)
       .select()
       .single()
+
+    // If columns don't exist, fallback to minimal schema
+    if (error && (error.message?.includes('column') || error.code === '42703')) {
+      logger.warn('Full article insert failed, trying minimal schema', { errorMessage: error.message })
+      const minimalData = {
+        blog_id: input.blogId,
+        user_id: userId,
+        title: input.title,
+        slug,
+        content: input.contentMarkdown ?? null,
+        meta_description: input.metaDescription ?? null,
+        summary: input.summary ?? null,
+        keywords: input.tags ?? [],
+        status: input.status ?? 'idea',
+      }
+
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('articles')
+        .insert(minimalData)
+        .select()
+        .single()
+
+      if (fallbackError) throw fallbackError
+      return fallbackData
+    }
 
     if (error) throw error
     return data
@@ -121,7 +155,8 @@ export class ArticleService {
     if (input.status) {
       const article = await this.getById(id, userId)
       const currentStatus = (article as { status: string }).status
-      if (!isValidTransition(currentStatus, input.status)) {
+      // Only validate if status is actually changing
+      if (input.status !== currentStatus && !isValidTransition(currentStatus, input.status)) {
         throw new Error(`Transição inválida: ${currentStatus} → ${input.status}`)
       }
     }
@@ -132,9 +167,15 @@ export class ArticleService {
       updateData.slug = slugify(input.title)
     }
     if (input.metaDescription !== undefined) updateData.meta_description = input.metaDescription
-    if (input.contentMarkdown !== undefined) updateData.content_markdown = input.contentMarkdown
+    if (input.contentMarkdown !== undefined) {
+      updateData.content_markdown = input.contentMarkdown
+      updateData.content = input.contentMarkdown // fallback column name
+    }
     if (input.summary !== undefined) updateData.summary = input.summary
-    if (input.tags !== undefined) updateData.tags = input.tags
+    if (input.tags !== undefined) {
+      updateData.tags = input.tags
+      updateData.keywords = input.tags // fallback column name
+    }
     if (input.status !== undefined) updateData.status = input.status
     if (input.scheduledDate !== undefined) updateData.scheduled_date = input.scheduledDate
     if (input.qualityScore !== undefined) updateData.quality_score = input.qualityScore
@@ -153,6 +194,26 @@ export class ArticleService {
       .eq('id', id)
       .select()
       .single()
+
+    // If columns don't exist, retry without new columns
+    if (updateError && (updateError.message?.includes('column') || updateError.code === '42703')) {
+      logger.warn('Full article update failed, trying without new columns', { errorMessage: updateError.message })
+      // Remove columns that might not exist
+      delete updateData.content_markdown
+      delete updateData.tags
+      delete updateData.scheduled_date
+      delete updateData.quality_score
+
+      const { data: fallback, error: fallbackErr } = await supabase
+        .from('articles')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single()
+
+      if (fallbackErr) throw fallbackErr
+      return fallback
+    }
 
     if (updateError) throw updateError
     return updated

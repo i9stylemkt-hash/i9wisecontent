@@ -1,5 +1,8 @@
 import { generateText } from 'ai'
 import { geminiModels, groqModels, openRouterModels } from './providers'
+import { Logger } from '@/lib/utils/logger'
+
+const logger = new Logger('AIFallback')
 
 // Ordem de fallback por prioridade
 const fallbackChain = [
@@ -45,7 +48,7 @@ export async function generateWithFallback(prompt: string, options?: FallbackOpt
         fallbackUsed: provider.name !== chain[0]?.name,
       }
     } catch (error) {
-      console.warn(`[AI Fallback] ${provider.name} falhou:`, error)
+      logger.warn(`${provider.name} falhou`, { provider: provider.name, error: error instanceof Error ? error.message : String(error) })
       lastError = error instanceof Error ? error : new Error(String(error))
       continue
     }

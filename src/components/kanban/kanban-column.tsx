@@ -17,7 +17,7 @@ export function KanbanColumn({ id, title, count, children }: KanbanColumnProps) 
     <div
       ref={setNodeRef}
       className={cn(
-        'flex w-64 flex-shrink-0 flex-col rounded-lg border border-border bg-card/50',
+        'flex w-64 shrink-0 flex-col rounded-lg border border-border bg-card/50',
         isOver && 'border-primary/50 bg-primary/5'
       )}
     >
@@ -27,7 +27,7 @@ export function KanbanColumn({ id, title, count, children }: KanbanColumnProps) 
           {count}
         </span>
       </div>
-      <div className="flex flex-col gap-2 p-2 min-h-[120px] overflow-y-auto max-h-[calc(100vh-280px)]">
+      <div className="flex flex-col gap-2 p-2 min-h-30 overflow-y-auto max-h-[calc(100vh-280px)]">
         {children}
       </div>
     </div>

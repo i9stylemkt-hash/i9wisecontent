@@ -1,5 +1,3 @@
-import type { z } from 'zod'
-
 export interface AgentInput {
   blogConfig: {
     name: string
@@ -44,6 +42,9 @@ export interface PlannerOutput {
   outline: string[]
   targetKeywords: string[]
   estimatedWordCount: number
+  titleSuggestions: string[]
+  contentType: string
+  targetAudienceSegment: string
 }
 
 export interface ResearcherOutput {
@@ -51,6 +52,9 @@ export interface ResearcherOutput {
   keyPoints: string[]
   references: string[]
   dataPoints: string[]
+  statistics: string[]
+  competitorInsights: string[]
+  enrichedOutline: string[]
 }
 
 export interface WriterOutput {

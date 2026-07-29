@@ -1,6 +1,10 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import dotenv from 'dotenv'
+
+// Carregar .env.local para testes de integração
+dotenv.config({ path: '.env.local' })
 
 export default defineConfig({
   plugins: [react()],
@@ -8,6 +12,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./tests/setup.ts'],
+    exclude: ['tests/e2e/**', 'node_modules/**'],
   },
   resolve: {
     alias: {
