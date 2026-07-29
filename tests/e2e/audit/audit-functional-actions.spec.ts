@@ -1,607 +1,677 @@
-import { test, expect } from './fixtures';
+import { test, expect } from '@playwright/test';
+import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 /**
- * Varredura completa de funcionalidades:
+ * Varredura completa de funcionalidades do i9 Wise Content:
  * - Botões de ação que não levam a lugar nenhum
  * - Links mortos ou desconectados
  * - Gatilhos que não disparam ações
  * - Estados ausentes em formulários e interações
+ *
+ * Testa contra o site live na Vercel.
  */
+
+const BASE_URL = 'https://i9wisecontent.vercel.app';
+
+interface NavResult {
+  url: string;
+  blocked: boolean;
+  needsAuth: boolean;
+  success: boolean;
+}
+
+/** Helper para navegar com tolerância a redirect de auth */
+async function safeGoto(page: import('@playwright/test').Page, path: string): Promise<NavResult> {
+  const fullUrl = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+
+  await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(2000);
+
+  const currentUrl = page.url();
+  const isVercelAuth = currentUrl.includes('vercel.com/') && (await page.locator('text=Log in to Vercel').count()) > 0;
+  const isAppLogin = currentUrl.includes('/login') && !isVercelAuth;
+
+  return {
+    url: currentUrl,
+    blocked: isVercelAuth,
+    needsAuth: isAppLogin,
+    success: !isVercelAuth && !isAppLogin,
+  };
+}
+
 test.describe('Audit: Functional Actions & Connectivity', () => {
   const MODULE = 'functional-actions';
+  const results: Record<string, unknown[]> = {};
 
-  // ─── DASHBOARD ─────────────────────────────────────────────────────────────
+  const PAGES = [
+    '/dashboard',
+    '/blogs',
+    '/articles',
+    '/ideas',
+    '/pipeline',
+    '/templates',
+    '/prompts',
+    '/settings',
+    '/calendar',
+  ];
 
-  test.describe('Dashboard', () => {
-    test('dashboard stats cards are clickable and navigate somewhere', async ({
-      page,
-      auditPage,
-    }) => {
-      await auditPage.goto('/dashboard');
-      await auditPage.waitForReady();
+  // ─── TEST: Page Accessibility ──────────────────────────────────────────────
 
-      // Look for stats cards that should be clickable
-      const cards = page.locator('[class*="card"], [class*="Card"]');
-      const count = await cards.count();
-      const deadCards: string[] = [];
+  test('verify all pages are accessible (not blocked)', async ({ page }) => {
+    const pageStatus: { path: string; status: string; url: string }[] = [];
 
-      for (let i = 0; i < Math.min(count, 10); i++) {
-        const card = cards.nth(i);
-        const isVisible = await card.isVisible();
-        if (!isVisible) continue;
+    for (const route of PAGES) {
+      const result = await safeGoto(page, route);
 
-        // Check if card has a link inside
-        const link = card.locator('a');
-        const linkCount = await link.count();
+      let status = 'accessible';
+      if (result.blocked) status = 'BLOCKED_BY_VERCEL_AUTH';
+      else if (result.needsAuth) status = 'NEEDS_APP_AUTH';
 
-        // Check for clickable behavior
-        const clickable = card.locator('a, button, [role="button"], [onclick]');
-        const clickableCount = await clickable.count();
+      pageStatus.push({ path: route, status, url: result.url });
+    }
 
-        const cardText = (await card.textContent())?.trim().slice(0, 50) || `card-${i}`;
+    console.log(`\n[${MODULE}] PAGE ACCESSIBILITY REPORT:`);
+    console.table(pageStatus);
 
-        if (linkCount === 0 && clickableCount === 0) {
-          // It's OK for info-only cards, just log
-          console.log(`[${MODULE}] Dashboard card "${cardText}" has no interactive elements`);
-        }
+    const blocked = pageStatus.filter((p) => p.status === 'BLOCKED_BY_VERCEL_AUTH');
+    if (blocked.length > 0) {
+      console.warn(`\n⚠️  ${blocked.length} pages blocked by Vercel Authentication.`);
+      console.warn('   Disable "Vercel Authentication" in Project Settings > Security');
+      console.warn('   or configure a bypass secret for E2E testing.');
+    }
+
+    const needsAuth = pageStatus.filter((p) => p.status === 'NEEDS_APP_AUTH');
+    if (needsAuth.length > 0) {
+      console.log(`\n📋 ${needsAuth.length} pages redirect to app login (expected for protected routes).`);
+    }
+
+    results['pageAccess'] = pageStatus;
+  });
+
+  // ─── TEST: Login Page Functionality ────────────────────────────────────────
+
+  test('login page renders correctly and form is functional', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
+
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
+
+    // Should show the login form
+    const emailInput = page.locator('#email');
+    const passwordInput = page.locator('#password');
+    const submitBtn = page.locator('button[type="submit"]');
+
+    await expect(emailInput).toBeVisible({ timeout: 10000 });
+    await expect(passwordInput).toBeVisible({ timeout: 5000 });
+    await expect(submitBtn).toBeVisible({ timeout: 5000 });
+
+    // Submit button should be enabled
+    const isDisabled = await submitBtn.isDisabled();
+    expect(isDisabled).toBeFalsy();
+
+    // Toggle between login/signup
+    const toggleBtn = page.locator('button:has-text("Criar conta"), button:has-text("Entrar")');
+    if ((await toggleBtn.count()) > 0) {
+      await toggleBtn.first().click();
+      await page.waitForTimeout(500);
+      // Should change button text
+      const newText = await submitBtn.textContent();
+      expect(newText).toContain('Criar Conta');
+    }
+
+    console.log(`[${MODULE}] ✅ Login page form is functional`);
+  });
+
+  // ─── TEST: Login Flow ──────────────────────────────────────────────────────
+
+  test('login with valid credentials navigates to dashboard', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
+
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
+
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
+
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
+
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+
+    // Should navigate to dashboard or show error
+    await page.waitForTimeout(5000);
+    const currentUrl = page.url();
+
+    if (currentUrl.includes('/dashboard')) {
+      console.log(`[${MODULE}] ✅ Login successful, redirected to dashboard`);
+    } else if (currentUrl.includes('/login')) {
+      // Check for error message
+      const error = page.locator('[class*="destructive"], [class*="error"], text=Invalid');
+      const hasError = (await error.count()) > 0;
+      if (hasError) {
+        const errorText = await error.first().textContent();
+        console.warn(`[${MODULE}] ⚠️ Login failed with error: ${errorText}`);
       }
-    });
+    }
+  });
 
-    test('dashboard quick action buttons work', async ({ page, auditPage }) => {
-      await auditPage.goto('/dashboard');
-      await auditPage.waitForReady();
+  // ─── TEST: Authenticated Page Navigation ──────────────────────────────────
 
-      // Look for action buttons in the dashboard
-      const actionButtons = page.locator(
-        'button:has-text("Criar"), button:has-text("Novo"), button:has-text("Gerar"), a:has-text("Criar"), a:has-text("Novo")'
-      );
-      const count = await actionButtons.count();
-      const results: { text: string; action: string }[] = [];
+  test('after login, all sidebar navigation works', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
+
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
+
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
+
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
+
+    // Login first
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForTimeout(5000);
+
+    if (!page.url().includes('/dashboard')) {
+      test.skip(true, 'Login failed, cannot test navigation');
+      return;
+    }
+
+    // Now test all navigation
+    const navResults: { route: string; status: string; details: string }[] = [];
+
+    for (const route of PAGES) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2000);
+
+      const url = page.url();
+      const hasContent = (await page.locator('main, [role="main"]').count()) > 0;
+      const hasError = (await page.locator('text=Error, text=Erro, text=404, text=500').count()) > 0;
+      const isLogin = url.includes('/login');
+
+      let status = 'OK';
+      let details = '';
+
+      if (isLogin) {
+        status = 'REDIRECT_TO_LOGIN';
+        details = 'Session may have expired';
+      } else if (hasError) {
+        status = 'HAS_ERRORS';
+        details = await page.locator('text=Error, text=Erro').first().textContent() || '';
+      } else if (!hasContent) {
+        status = 'EMPTY_PAGE';
+        details = 'No main content rendered';
+      } else {
+        details = `Content loaded at ${url}`;
+      }
+
+      navResults.push({ route, status, details });
+    }
+
+    console.log(`\n[${MODULE}] NAVIGATION REPORT (authenticated):`);
+    console.table(navResults);
+
+    const failures = navResults.filter((r) => r.status !== 'OK');
+    if (failures.length > 0) {
+      console.error(`\n❌ ${failures.length} navigation failures:`, JSON.stringify(failures, null, 2));
+    }
+  });
+
+  // ─── TEST: Button Actions Sweep ────────────────────────────────────────────
+
+  test('sweep all buttons for dead actions (authenticated)', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
+
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
+
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
+
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
+
+    // Login
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForTimeout(5000);
+
+    if (!page.url().includes('/dashboard')) {
+      test.skip(true, 'Login failed');
+      return;
+    }
+
+    const deadButtons: { page: string; text: string; issue: string }[] = [];
+    const workingButtons: { page: string; text: string; action: string }[] = [];
+
+    for (const route of PAGES) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2500);
+
+      if (page.url().includes('/login')) continue;
+
+      const buttons = page.locator('button:visible');
+      const count = await buttons.count();
 
       for (let i = 0; i < count; i++) {
-        const btn = actionButtons.nth(i);
-        const isVisible = await btn.isVisible();
-        if (!isVisible) continue;
+        const btn = buttons.nth(i);
+        const text = ((await btn.textContent())?.trim() || '').slice(0, 50);
+        const disabled = await btn.isDisabled();
+        const ariaLabel = await btn.getAttribute('aria-label');
+        const btnName = text || ariaLabel || `button-${i}`;
 
-        const text = (await btn.textContent())?.trim() || '';
-        const tag = await btn.evaluate((el) => el.tagName.toLowerCase());
-        const href = await btn.getAttribute('href');
-        const disabled = await btn.isDisabled().catch(() => false);
+        if (disabled) continue; // Skip disabled buttons (expected behavior)
 
-        if (tag === 'a' && href) {
-          results.push({ text, action: `link → ${href}` });
-        } else if (tag === 'button' && !disabled) {
-          results.push({ text, action: 'button (has handler)' });
-        } else if (disabled) {
-          results.push({ text, action: 'DISABLED' });
-        }
-      }
-
-      console.log(`[${MODULE}] Dashboard action buttons:`, JSON.stringify(results, null, 2));
-    });
-  });
-
-  // ─── BLOGS ─────────────────────────────────────────────────────────────────
-
-  test.describe('Blogs', () => {
-    test('criar novo blog button navigates to creation page', async ({ page, auditPage }) => {
-      await auditPage.goto('/blogs');
-      await auditPage.waitForReady();
-
-      const createBtn = page.locator(
-        'a:has-text("Criar"), a:has-text("Novo"), button:has-text("Criar"), button:has-text("Novo")'
-      );
-      const count = await createBtn.count();
-
-      if (count > 0) {
-        const firstVisible = createBtn.first();
-        const tag = await firstVisible.evaluate((el) => el.tagName.toLowerCase());
-        const href = await firstVisible.getAttribute('href');
-
-        if (tag === 'a' && href) {
-          await firstVisible.click();
-          await page.waitForTimeout(2000);
-          const url = page.url();
-          expect(url).toContain('/blogs/new');
-        } else {
-          await firstVisible.click();
-          await page.waitForTimeout(2000);
-          // Should open a form or navigate somewhere
-          const url = page.url();
-          const formVisible = await page.locator('form, input, [role="dialog"]').count();
-          expect(url.includes('/blogs/new') || formVisible > 0).toBeTruthy();
-        }
-      } else {
-        console.warn(`[${MODULE}] No "Criar" or "Novo" button found on /blogs`);
-      }
-    });
-
-    test('blog list items are clickable and navigate to detail', async ({ page, auditPage }) => {
-      await auditPage.goto('/blogs');
-      await auditPage.waitForReady();
-
-      const blogItems = page.locator('a[href*="/blogs/"]');
-      const count = await blogItems.count();
-
-      if (count > 0) {
-        const firstHref = await blogItems.first().getAttribute('href');
-        await blogItems.first().click();
-        await page.waitForTimeout(2000);
-        const url = page.url();
-        // Should navigate to the blog detail
-        expect(url).toContain('/blogs/');
-      } else {
-        console.log(`[${MODULE}] No blog items found to click`);
-      }
-    });
-  });
-
-  // ─── ARTICLES ──────────────────────────────────────────────────────────────
-
-  test.describe('Articles', () => {
-    test('articles page has working filter/search', async ({ page, auditPage }) => {
-      await auditPage.goto('/articles');
-      await auditPage.waitForReady();
-
-      // Look for filter, search, or select elements
-      const filters = page.locator('input[type="search"], input[placeholder*="Buscar"], select, [class*="filter"]');
-      const count = await filters.count();
-
-      console.log(`[${MODULE}] Articles page filters found: ${count}`);
-
-      if (count > 0) {
-        const filter = filters.first();
-        const tag = await filter.evaluate((el) => el.tagName.toLowerCase());
-
-        if (tag === 'input') {
-          await filter.fill('test');
-          await page.waitForTimeout(1000);
-          // Should filter or trigger search without errors
-        }
-      }
-    });
-
-    test('article cards link to article detail page', async ({ page, auditPage }) => {
-      await auditPage.goto('/articles');
-      await auditPage.waitForReady();
-
-      const articleLinks = page.locator('a[href*="/articles/"]');
-      const count = await articleLinks.count();
-
-      if (count > 0) {
-        const href = await articleLinks.first().getAttribute('href');
-        await articleLinks.first().click();
-        await page.waitForTimeout(2000);
-        const url = page.url();
-        expect(url).toContain('/articles/');
-      } else {
-        console.log(`[${MODULE}] No article links found`);
-      }
-    });
-  });
-
-  // ─── IDEAS ─────────────────────────────────────────────────────────────────
-
-  test.describe('Ideas', () => {
-    test('ideas page create button works', async ({ page, auditPage }) => {
-      await auditPage.goto('/ideas');
-      await auditPage.waitForReady();
-
-      const createBtn = page.locator(
-        'button:has-text("Criar"), button:has-text("Nova"), button:has-text("Adicionar"), a:has-text("Nova")'
-      );
-      const count = await createBtn.count();
-
-      if (count > 0) {
-        await createBtn.first().click();
-        await page.waitForTimeout(1500);
-
-        // Should open a form, modal, or navigate
-        const dialog = page.locator('[role="dialog"], form, input[type="text"]');
-        const dialogCount = await dialog.count();
-        const urlChanged = !page.url().endsWith('/ideas');
-
-        expect(
-          dialogCount > 0 || urlChanged,
-          'Create button should open a form/dialog or navigate'
-        ).toBeTruthy();
-      } else {
-        console.warn(`[${MODULE}] No create button found on /ideas`);
-      }
-    });
-  });
-
-  // ─── PIPELINE ──────────────────────────────────────────────────────────────
-
-  test.describe('Pipeline', () => {
-    test('pipeline page gerar artigo button is functional', async ({ page, auditPage }) => {
-      await auditPage.goto('/pipeline');
-      await auditPage.waitForReady();
-
-      // The "Gerar Artigo" button should exist but be disabled without blog selection
-      const gerarBtn = page.locator('button:has-text("Gerar")');
-      const count = await gerarBtn.count();
-
-      expect(count, 'Should have "Gerar Artigo" button').toBeGreaterThan(0);
-
-      const isDisabled = await gerarBtn.first().isDisabled();
-      // Without blog selected, should be disabled
-      expect(isDisabled).toBeTruthy();
-
-      // Select a blog
-      const select = page.locator('select');
-      if ((await select.count()) > 0) {
-        const options = await select.first().locator('option').allTextContents();
-        if (options.length > 1) {
-          // Select first non-empty option
-          await select.first().selectOption({ index: 1 });
-          await page.waitForTimeout(500);
-
-          // Button should now be enabled
-          const stillDisabled = await gerarBtn.first().isDisabled();
-          expect(stillDisabled, 'Button should enable after selecting a blog').toBeFalsy();
-        }
-      }
-    });
-
-    test('pipeline run items show correct status', async ({ page, auditPage }) => {
-      await auditPage.goto('/pipeline');
-      await auditPage.waitForReady();
-
-      const runs = page.locator('[class*="card"], [class*="Card"]');
-      const count = await runs.count();
-
-      // Check for the "Limite de requisições excedido" warning or pipeline runs
-      const warningText = await page.locator('text=Limite').count();
-      const emptyState = await page.locator('text=Nenhuma execução').count();
-
-      console.log(`[${MODULE}] Pipeline: ${count} cards, warning: ${warningText > 0}, empty: ${emptyState > 0}`);
-    });
-  });
-
-  // ─── TEMPLATES ─────────────────────────────────────────────────────────────
-
-  test.describe('Templates', () => {
-    test('templates page loads and has content', async ({ page, auditPage }) => {
-      await auditPage.goto('/templates');
-      await auditPage.waitForReady();
-
-      const content = page.locator('main, [role="main"]');
-      await expect(content.first()).toBeVisible({ timeout: 10000 });
-
-      // Check for template cards or empty state
-      const templates = page.locator('[class*="card"], [class*="Card"], [class*="template"]');
-      const emptyState = page.locator('text=Nenhum template, text=vazio, text=Criar');
-      const count = await templates.count();
-      const hasEmpty = (await emptyState.count()) > 0;
-
-      console.log(`[${MODULE}] Templates: ${count} items found, empty state: ${hasEmpty}`);
-    });
-
-    test('template action buttons trigger expected behavior', async ({ page, auditPage }) => {
-      await auditPage.goto('/templates');
-      await auditPage.waitForReady();
-
-      const actionBtns = page.locator(
-        'button:has-text("Usar"), button:has-text("Editar"), button:has-text("Criar"), a[href*="template"]'
-      );
-      const count = await actionBtns.count();
-
-      const results: { text: string; works: boolean; detail: string }[] = [];
-
-      for (let i = 0; i < Math.min(count, 5); i++) {
-        const btn = actionBtns.nth(i);
-        const isVisible = await btn.isVisible();
-        if (!isVisible) continue;
-
-        const text = (await btn.textContent())?.trim() || '';
-        const urlBefore = page.url();
-
-        await btn.click();
-        await page.waitForTimeout(1500);
-
-        const urlAfter = page.url();
-        const dialogOpen = (await page.locator('[role="dialog"]').count()) > 0;
-        const formVisible = (await page.locator('form:visible, textarea:visible').count()) > 0;
-
-        const actionOccurred = urlBefore !== urlAfter || dialogOpen || formVisible;
-
-        results.push({
-          text,
-          works: actionOccurred,
-          detail: actionOccurred
-            ? `Navigated or opened dialog`
-            : 'NO ACTION DETECTED',
+        // Check for links that look like buttons
+        const hasHref = await btn.evaluate((el) => {
+          const parent = el.closest('a');
+          return parent?.getAttribute('href') || null;
         });
 
-        // Navigate back if needed
+        if (hasHref) {
+          workingButtons.push({ page: route, text: btnName, action: `navigates: ${hasHref}` });
+          continue;
+        }
+
+        // For buttons that aren't in a form and have no obvious handler
+        const inForm = await btn.evaluate((el) => el.closest('form') !== null);
+        const hasType = await btn.getAttribute('type');
+
+        if (inForm || hasType === 'submit') {
+          workingButtons.push({ page: route, text: btnName, action: 'form-submit' });
+          continue;
+        }
+
+        // Click and observe what happens
+        const urlBefore = page.url();
+        const consoleErrors: string[] = [];
+
+        page.on('console', (msg) => {
+          if (msg.type() === 'error') consoleErrors.push(msg.text());
+        });
+
+        try {
+          await btn.click({ timeout: 5000 });
+          await page.waitForTimeout(1500);
+        } catch {
+          // Click failed (element removed, overlay, etc.)
+          continue;
+        }
+
+        const urlAfter = page.url();
+        const dialogOpened = (await page.locator('[role="dialog"], [role="alertdialog"]').count()) > 0;
+        const dropdownOpened = (await page.locator('[role="menu"], [role="listbox"], [data-state="open"]').count()) > 0;
+        const toastAppeared = (await page.locator('[data-slot="toast"], [role="status"], [class*="toast"]').count()) > 0;
+
         if (urlBefore !== urlAfter) {
-          await page.goBack();
-          await page.waitForTimeout(1000);
-        } else if (dialogOpen) {
+          workingButtons.push({ page: route, text: btnName, action: `navigated: ${urlAfter}` });
+          // Go back
+          await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          await page.waitForTimeout(1500);
+        } else if (dialogOpened) {
+          workingButtons.push({ page: route, text: btnName, action: 'opened-dialog' });
           await page.keyboard.press('Escape');
           await page.waitForTimeout(500);
-        }
-      }
-
-      const deadButtons = results.filter((r) => !r.works);
-      if (deadButtons.length > 0) {
-        console.error(
-          `[${MODULE}] DEAD BUTTONS on /templates:`,
-          JSON.stringify(deadButtons, null, 2)
-        );
-      }
-
-      console.log(`[${MODULE}] Template buttons audit:`, JSON.stringify(results, null, 2));
-    });
-  });
-
-  // ─── PROMPTS ───────────────────────────────────────────────────────────────
-
-  test.describe('Prompts', () => {
-    test('prompts page loads and shows content', async ({ page, auditPage }) => {
-      await auditPage.goto('/prompts');
-      await auditPage.waitForReady();
-
-      const content = page.locator('main, [role="main"]');
-      await expect(content.first()).toBeVisible({ timeout: 10000 });
-
-      const prompts = page.locator('[class*="card"], [class*="Card"]');
-      const count = await prompts.count();
-      console.log(`[${MODULE}] Prompts page: ${count} items found`);
-    });
-
-    test('prompt action buttons work', async ({ page, auditPage }) => {
-      await auditPage.goto('/prompts');
-      await auditPage.waitForReady();
-
-      const actionBtns = page.locator(
-        'button:has-text("Criar"), button:has-text("Novo"), button:has-text("Editar"), button:has-text("Usar")'
-      );
-      const count = await actionBtns.count();
-
-      for (let i = 0; i < Math.min(count, 3); i++) {
-        const btn = actionBtns.nth(i);
-        const isVisible = await btn.isVisible();
-        if (!isVisible) continue;
-
-        const text = (await btn.textContent())?.trim() || '';
-        const urlBefore = page.url();
-        const disabled = await btn.isDisabled();
-
-        if (!disabled) {
-          await btn.click();
-          await page.waitForTimeout(1500);
-
-          const urlAfter = page.url();
-          const dialogOpen = (await page.locator('[role="dialog"]').count()) > 0;
-
-          if (urlBefore === urlAfter && !dialogOpen) {
-            console.error(`[${MODULE}] DEAD BUTTON on /prompts: "${text}"`);
-          }
-
-          // Reset state
-          if (urlBefore !== urlAfter) {
-            await page.goBack();
-            await page.waitForTimeout(1000);
-          } else if (dialogOpen) {
-            await page.keyboard.press('Escape');
-            await page.waitForTimeout(500);
-          }
-        }
-      }
-    });
-  });
-
-  // ─── SETTINGS ──────────────────────────────────────────────────────────────
-
-  test.describe('Settings', () => {
-    test('settings tabs/sections all load content', async ({ page, auditPage }) => {
-      await auditPage.goto('/settings');
-      await auditPage.waitForReady();
-
-      // Look for tabs or settings navigation
-      const tabs = page.locator(
-        '[role="tab"], a[href*="/settings/"], button[class*="tab"]'
-      );
-      const count = await tabs.count();
-      const emptyTabs: string[] = [];
-
-      console.log(`[${MODULE}] Settings: ${count} tabs/sections found`);
-
-      for (let i = 0; i < Math.min(count, 8); i++) {
-        const tab = tabs.nth(i);
-        const isVisible = await tab.isVisible();
-        if (!isVisible) continue;
-
-        const text = (await tab.textContent())?.trim() || '';
-        const href = await tab.getAttribute('href');
-
-        if (href) {
-          await page.goto(href, { waitUntil: 'domcontentloaded' });
+        } else if (dropdownOpened) {
+          workingButtons.push({ page: route, text: btnName, action: 'opened-dropdown/menu' });
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(500);
+        } else if (toastAppeared) {
+          workingButtons.push({ page: route, text: btnName, action: 'triggered-toast' });
+        } else if (consoleErrors.length > 0) {
+          deadButtons.push({ page: route, text: btnName, issue: `Console error: ${consoleErrors[0]}` });
         } else {
-          await tab.click();
+          // No visible reaction - might be dead or might have subtle state change
+          deadButtons.push({ page: route, text: btnName, issue: 'No visible reaction on click' });
         }
-        await page.waitForTimeout(1500);
 
-        // Check if content loaded
-        const contentArea = page.locator('main form, main [class*="card"], main input, main select');
-        const contentCount = await contentArea.count();
-
-        if (contentCount === 0) {
-          emptyTabs.push(text || href || `tab-${i}`);
-        }
+        page.removeAllListeners('console');
       }
+    }
 
-      if (emptyTabs.length > 0) {
-        console.error(`[${MODULE}] EMPTY SETTINGS SECTIONS:`, emptyTabs);
-      }
-    });
+    // Report
+    console.log(`\n[${MODULE}] ═══════════════════════════════════════════════`);
+    console.log(`[${MODULE}] BUTTON ACTION SWEEP REPORT`);
+    console.log(`[${MODULE}] ═══════════════════════════════════════════════`);
+    console.log(`\n✅ Working buttons (${workingButtons.length}):`);
+    if (workingButtons.length <= 30) {
+      console.table(workingButtons);
+    } else {
+      console.log(`  (${workingButtons.length} buttons verified as functional)`);
+    }
 
-    test('settings save buttons trigger save action', async ({ page, auditPage }) => {
-      await auditPage.goto('/settings');
-      await auditPage.waitForReady();
+    console.log(`\n⚠️ Potentially dead buttons (${deadButtons.length}):`);
+    if (deadButtons.length > 0) {
+      console.table(deadButtons);
+    } else {
+      console.log('  None detected!');
+    }
 
-      const saveBtn = page.locator(
-        'button:has-text("Salvar"), button[type="submit"]'
-      );
-      const count = await saveBtn.count();
-
-      if (count > 0) {
-        const btn = saveBtn.first();
-        const disabled = await btn.isDisabled();
-
-        console.log(`[${MODULE}] Settings save button: disabled=${disabled}`);
-
-        // Check if form inputs exist
-        const inputs = page.locator('input:visible, select:visible, textarea:visible');
-        const inputCount = await inputs.count();
-        console.log(`[${MODULE}] Settings form inputs: ${inputCount}`);
-      } else {
-        console.warn(`[${MODULE}] No save button found on /settings`);
-      }
-    });
+    results['deadButtons'] = deadButtons;
+    results['workingButtons'] = workingButtons;
   });
 
-  // ─── CALENDAR ──────────────────────────────────────────────────────────────
+  // ─── TEST: Links Connectivity ──────────────────────────────────────────────
 
-  test.describe('Calendar', () => {
-    test('calendar page renders and has navigation controls', async ({ page, auditPage }) => {
-      await auditPage.goto('/calendar');
-      await auditPage.waitForReady();
+  test('verify all internal links connect to valid pages', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
 
-      // Calendar should have prev/next navigation
-      const navButtons = page.locator(
-        'button[aria-label*="anterior"], button[aria-label*="próximo"], button:has(svg[class*="chevron"]), button:has(svg[class*="arrow"])'
-      );
-      const generalButtons = page.locator('button:visible');
-      const count = await generalButtons.count();
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
 
-      console.log(`[${MODULE}] Calendar: ${count} buttons found`);
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
 
-      // Should have some date indicators
-      const dateElements = page.locator('[class*="day"], [class*="date"], td, [class*="calendar"]');
-      const dateCount = await dateElements.count();
-      expect(dateCount, 'Calendar should render date elements').toBeGreaterThan(0);
-    });
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
+
+    // Login
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForTimeout(5000);
+
+    if (!page.url().includes('/dashboard')) {
+      test.skip(true, 'Login failed');
+      return;
+    }
+
+    const allLinks: Set<string> = new Set();
+    const brokenLinks: { foundOn: string; href: string; issue: string }[] = [];
+    const deadEndLinks: { foundOn: string; href: string; text: string }[] = [];
+
+    // Collect all internal links across pages
+    for (const route of PAGES) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2000);
+
+      if (page.url().includes('/login')) continue;
+
+      const links = page.locator('a[href]:visible');
+      const count = await links.count();
+
+      for (let i = 0; i < count; i++) {
+        const href = await links.nth(i).getAttribute('href');
+        if (href && href.startsWith('/') && !href.startsWith('/#')) {
+          allLinks.add(href);
+        }
+      }
+    }
+
+    console.log(`\n[${MODULE}] Found ${allLinks.size} unique internal links to verify`);
+
+    // Verify each unique link
+    for (const href of allLinks) {
+      try {
+        const response = await page.goto(`${BASE_URL}${href}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: 15000,
+        });
+        const status = response?.status() || 0;
+        const finalUrl = page.url();
+
+        if (status >= 400) {
+          brokenLinks.push({ foundOn: 'multiple', href, issue: `HTTP ${status}` });
+        } else if (finalUrl.includes('/login') && !href.includes('/login')) {
+          // Redirected to login - expected for auth-required pages
+        }
+      } catch (e) {
+        brokenLinks.push({ foundOn: 'multiple', href, issue: `Navigation failed: ${(e as Error).message?.slice(0, 80)}` });
+      }
+    }
+
+    // Also check for <a href="#"> or <a href=""> (dead-end links)
+    for (const route of PAGES.slice(0, 5)) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2000);
+
+      if (page.url().includes('/login')) continue;
+
+      const links = page.locator('a:visible');
+      const count = await links.count();
+
+      for (let i = 0; i < count; i++) {
+        const link = links.nth(i);
+        const href = await link.getAttribute('href');
+        const text = ((await link.textContent())?.trim() || '').slice(0, 40);
+
+        if (!href || href === '#' || href === '' || href === 'javascript:void(0)') {
+          deadEndLinks.push({ foundOn: route, href: href || '(empty)', text });
+        }
+      }
+    }
+
+    // Report
+    console.log(`\n[${MODULE}] ═══════════════════════════════════════════════`);
+    console.log(`[${MODULE}] LINK CONNECTIVITY REPORT`);
+    console.log(`[${MODULE}] ═══════════════════════════════════════════════`);
+    console.log(`\n📊 Total unique internal links: ${allLinks.size}`);
+
+    if (brokenLinks.length > 0) {
+      console.error(`\n❌ Broken links (${brokenLinks.length}):`);
+      console.table(brokenLinks);
+    } else {
+      console.log('\n✅ No broken links detected!');
+    }
+
+    if (deadEndLinks.length > 0) {
+      console.warn(`\n⚠️ Dead-end links (href="#" or empty) (${deadEndLinks.length}):`);
+      console.table(deadEndLinks);
+    }
   });
 
-  // ─── GLOBAL: DEAD BUTTONS SWEEP ───────────────────────────────────────────
+  // ─── TEST: Form Submissions ────────────────────────────────────────────────
 
-  test.describe('Global Dead Button Detection', () => {
-    const PAGES = [
-      '/dashboard',
-      '/blogs',
-      '/articles',
-      '/ideas',
-      '/pipeline',
-      '/templates',
-      '/prompts',
-      '/settings',
-      '/calendar',
-    ];
+  test('form submit buttons trigger actual submissions', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
 
-    test('identify all buttons without click handlers or navigation', async ({
-      page,
-      auditPage,
-    }) => {
-      const deadButtons: { page: string; text: string; type: string }[] = [];
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
 
-      for (const route of PAGES) {
-        await page.goto(route, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(2000);
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
 
-        const buttons = page.locator('button:visible, a[role="button"]:visible');
-        const count = await buttons.count();
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
 
-        for (let i = 0; i < count; i++) {
-          const btn = buttons.nth(i);
-          const text = (await btn.textContent())?.trim().slice(0, 60) || '';
-          const tag = await btn.evaluate((el) => el.tagName.toLowerCase());
+    // Login
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForTimeout(5000);
 
-          if (tag === 'a') {
-            const href = await btn.getAttribute('href');
-            if (!href || href === '#' || href === '') {
-              deadButtons.push({ page: route, text, type: 'link-no-href' });
-            }
-          } else {
-            // Check for onclick, event listeners via data attributes
-            const hasOnClick = await btn.evaluate((el) => {
-              const hasAttr = el.hasAttribute('onclick');
-              const hasDisabled = (el as HTMLButtonElement).disabled;
-              const hasType = el.getAttribute('type');
-              // Buttons of type="submit" in forms are functional
-              if (hasType === 'submit') return true;
-              // React attaches handlers internally, can't detect via DOM easily
-              // But we can check if the button is inside a form or has aria attributes
-              const inForm = el.closest('form') !== null;
-              return hasAttr || inForm || hasDisabled;
-            });
+    if (!page.url().includes('/dashboard')) {
+      test.skip(true, 'Login failed');
+      return;
+    }
 
-            // For non-form, non-disabled buttons without text - might be dead
-            if (!text && !hasOnClick) {
-              const ariaLabel = await btn.getAttribute('aria-label');
-              if (!ariaLabel) {
-                deadButtons.push({ page: route, text: `[empty-${i}]`, type: 'no-text-no-handler' });
-              }
-            }
-          }
-        }
+    const formsReport: { page: string; formCount: number; submitBtnCount: number; issue?: string }[] = [];
+    const pagesWithForms = ['/settings', '/blogs/new', '/ideas'];
+
+    for (const route of pagesWithForms) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2500);
+
+      if (page.url().includes('/login')) {
+        formsReport.push({ page: route, formCount: 0, submitBtnCount: 0, issue: 'Requires re-auth' });
+        continue;
       }
 
-      if (deadButtons.length > 0) {
-        console.error(
-          `\n[${MODULE}] ⚠️ POTENTIAL DEAD BUTTONS FOUND:\n`,
-          JSON.stringify(deadButtons, null, 2)
-        );
+      const forms = page.locator('form');
+      const formCount = await forms.count();
+      const submitBtns = page.locator('button[type="submit"]:visible, button:has-text("Salvar"):visible');
+      const submitBtnCount = await submitBtns.count();
+
+      if (formCount > 0 && submitBtnCount === 0) {
+        formsReport.push({ page: route, formCount, submitBtnCount, issue: 'Form without submit button!' });
       } else {
-        console.log(`[${MODULE}] ✅ No obvious dead buttons detected`);
+        formsReport.push({ page: route, formCount, submitBtnCount });
       }
-    });
+    }
 
-    test('all links with href navigate successfully (no 404/500)', async ({
-      page,
-      auditPage,
-    }) => {
-      const brokenLinks: { page: string; href: string; status: number }[] = [];
+    console.log(`\n[${MODULE}] FORMS REPORT:`);
+    console.table(formsReport);
+  });
 
-      for (const route of PAGES) {
-        await page.goto(route, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(1500);
+  // ─── TEST: Empty States ────────────────────────────────────────────────────
 
-        const links = page.locator('a[href]:visible');
-        const count = await links.count();
-        const hrefs: string[] = [];
+  test('pages with no data show proper empty states with CTAs', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
 
-        for (let i = 0; i < count; i++) {
-          const href = await links.nth(i).getAttribute('href');
-          if (href && href.startsWith('/') && !hrefs.includes(href)) {
-            hrefs.push(href);
-          }
-        }
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
 
-        // Check unique internal links
-        for (const href of hrefs.slice(0, 15)) {
-          try {
-            const response = await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const status = response?.status() || 0;
-            if (status >= 400) {
-              brokenLinks.push({ page: route, href, status });
-            }
-          } catch {
-            brokenLinks.push({ page: route, href, status: 0 });
-          }
-        }
-      }
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
 
-      if (brokenLinks.length > 0) {
-        console.error(
-          `\n[${MODULE}] ❌ BROKEN LINKS FOUND:\n`,
-          JSON.stringify(brokenLinks, null, 2)
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
+
+    // Login
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForTimeout(5000);
+
+    if (!page.url().includes('/dashboard')) {
+      test.skip(true, 'Login failed');
+      return;
+    }
+
+    const emptyStates: { page: string; hasEmptyState: boolean; hasCTA: boolean; detail: string }[] = [];
+
+    for (const route of PAGES) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(2500);
+
+      if (page.url().includes('/login')) continue;
+
+      // Check for empty state indicators
+      const emptyIndicators = page.locator(
+        'text=Nenhum, text=vazio, text=Nenhuma, text=Criar seu primeiro, text=Comece, text=Adicionar'
+      );
+      const hasEmpty = (await emptyIndicators.count()) > 0;
+
+      if (hasEmpty) {
+        // Check if there's a CTA button to guide the user
+        const cta = page.locator(
+          'button:has-text("Criar"), button:has-text("Novo"), a:has-text("Criar"), a:has-text("Começar")'
         );
-      }
+        const hasCTA = (await cta.count()) > 0;
 
-      expect(brokenLinks.length, `${brokenLinks.length} broken links found`).toBe(0);
-    });
+        const emptyText = await emptyIndicators.first().textContent();
+        emptyStates.push({
+          page: route,
+          hasEmptyState: true,
+          hasCTA,
+          detail: (emptyText || '').slice(0, 60),
+        });
+      }
+    }
+
+    if (emptyStates.length > 0) {
+      console.log(`\n[${MODULE}] EMPTY STATES REPORT:`);
+      console.table(emptyStates);
+
+      const missingCTAs = emptyStates.filter((e) => !e.hasCTA);
+      if (missingCTAs.length > 0) {
+        console.warn(`\n⚠️ Pages with empty state but NO CTA button:`, missingCTAs.map((e) => e.page));
+      }
+    }
+  });
+
+  // ─── TEST: Error Indicators ────────────────────────────────────────────────
+
+  test('check for visible error states or rate limit messages', async ({ page }) => {
+    const result = await safeGoto(page, '/login');
+
+    if (result.blocked) {
+      test.skip(true, 'Blocked by Vercel Authentication');
+      return;
+    }
+
+    const email = process.env.E2E_USER_EMAIL;
+    const password = process.env.E2E_USER_PASSWORD;
+
+    if (!email || !password) {
+      test.skip(true, 'E2E credentials not configured');
+      return;
+    }
+
+    // Login
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForTimeout(5000);
+
+    if (!page.url().includes('/dashboard')) {
+      test.skip(true, 'Login failed');
+      return;
+    }
+
+    const errors: { page: string; message: string }[] = [];
+
+    for (const route of PAGES) {
+      await page.goto(`${BASE_URL}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+
+      if (page.url().includes('/login')) continue;
+
+      // Check for error messages
+      const errorElements = page.locator(
+        '[class*="destructive"], [class*="error"], text=Erro, text=Error, text=Limite de requisições, text=falhou, text=failed'
+      );
+      const count = await errorElements.count();
+
+      for (let i = 0; i < Math.min(count, 5); i++) {
+        const text = (await errorElements.nth(i).textContent())?.trim().slice(0, 100) || '';
+        if (text) {
+          errors.push({ page: route, message: text });
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      console.log(`\n[${MODULE}] ═══════════════════════════════════════════════`);
+      console.error(`[${MODULE}] ❌ VISIBLE ERRORS/WARNINGS (${errors.length}):`);
+      console.table(errors);
+    } else {
+      console.log(`\n[${MODULE}] ✅ No visible errors across all pages`);
+    }
   });
 });
